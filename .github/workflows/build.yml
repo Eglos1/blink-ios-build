@@ -1,0 +1,123 @@
+name: Build Blink Chromium for iOS
+
+on:
+  workflow_dispatch:
+
+env:
+  DEPOT_TOOLS_PATH: /Users/runner/work/_temp/depot_tools
+
+jobs:
+  build-ios-blink:
+    name: Build content_shell (Blink) for iOS device
+    runs-on: macos-26
+    timeout-minutes: 360
+    steps:
+      - name: Environment info
+        run: |
+          sw_vers
+          xcodebuild -version
+          echo "--- disk before ---"
+          df -h /
+          sysctl -n hw.ncpu
+          sysctl -n hw.memsize
+
+      - name: Free disk space (keep only default Xcode, drop simulators)
+        run: |
+          set -x
+          default_xcode=$(xcode-select -p | sed 's#/Contents/Developer##')
+          echo "Default Xcode: $default_xcode"
+          ls -d /Applications/Xcode*.app 2>/dev/null || true
+          # Remove every Xcode except the selected one
+          for app in /Applications/Xcode*.app; do
+            if [ "$app" != "$default_xcode" ]; then
+              echo "Removing $app"
+              sudo rm -rf "$app" &
+            fi
+          done
+          wait
+          # Remove simulator runtimes (huge) - not needed for device builds
+          sudo rm -rf /Library/Developer/CoreSimulator/Profiles/Runtimes 2>/dev/null || true
+          sudo rm -rf /Applications/Simulator.app 2>/dev/null || true
+          sudo rm -rf ~/Library/Developer/CoreSimulator 2>/dev/null || true
+          # Remove extra Swift toolchains and caches
+          sudo rm -rf /Library/Developer/Toolchains 2>/dev/null || true
+          sudo rm -rf ~/Library/Caches/* 2>/dev/null || true
+          sudo rm -rf ~/Library/Developer/Xcode/DerivedData 2>/dev/null || true
+          sudo rm -rf /usr/local/lib/node_modules 2>/dev/null || true
+          sudo rm -rf ~/.cargo ~/.rustup ~/.gradle ~/.m2 ~/.npm 2>/dev/null || true
+          echo "--- disk after cleanup ---"
+          df -h /
+
+      - name: Install depot_tools
+        run: |
+          git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$DEPOT_TOOLS_PATH"
+          echo "$DEPOT_TOOLS_PATH" >> "$GITHUB_PATH"
+          echo "$DEPOT_TOOLS_PATH/python-bin" >> "$GITHUB_PATH"
+          git --version
+          python3 --version
+
+      - name: Fetch Chromium source (shallow, no history)
+        timeout-minutes: 120
+        run: |
+          set -x
+          mkdir -p /Users/runner/work/chromium
+          cd /Users/runner/work/chromium
+          fetch --no-history --nohooks ios
+          echo "--- disk after fetch ---"
+          df -h /
+          du -sh src 2>/dev/null || true
+
+      - name: Configure GN for Blink (use_blink=true)
+        run: |
+          cd /Users/runner/work/chromium
+          cat > .setup-gn <<'EOF'
+[gn_args]
+use_blink = true
+ios_content_shell_bundle_identifier = "com.example.blinkcontent"
+ios_enable_code_signing = false
+symbol_level = 0
+blink_symbol_level = 0
+EOF
+          gclient runhooks
+          echo "--- build dirs generated ---"
+          ls -la src/out 2>/dev/null || true
+
+      - name: Trim build dirs (keep only Release-iphoneos)
+        run: |
+          cd /Users/runner/work/chromium/src
+          rm -rf out/Debug-iphonesimulator out/Release-iphonesimulator out/Debug-iphoneos 2>/dev/null || true
+          echo "--- disk after gn gen ---"
+          df -h /
+          ls -la out/Release-iphoneos 2>/dev/null | head
+
+      - name: Build content_shell (Blink) for device
+        timeout-minutes: 200
+        run: |
+          cd /Users/runner/work/chromium/src
+          autoninja -C out/Release-iphoneos content_shell
+          echo "--- disk after build ---"
+          df -h /
+          ls -la out/Release-iphoneos/content_shell.app 2>/dev/null || true
+
+      - name: Package .ipa
+        run: |
+          cd /Users/runner/work/chromium/src
+          APP=out/Release-iphoneos/content_shell.app
+          if [ ! -d "$APP" ]; then
+            echo "ERROR: content_shell.app not found"
+            exit 1
+          fi
+          echo "--- Info.plist bundle id ---"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Info.plist" 2>/dev/null || true
+          mkdir -p /tmp/ipa/Payload
+          cp -R "$APP" /tmp/ipa/Payload/
+          cd /tmp/ipa
+          zip -r blink-content-shell.ipa Payload
+          ls -la /tmp/ipa/blink-content-shell.ipa
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: blink-content-shell-ipa
+          path: /tmp/ipa/blink-content-shell.ipa
+          if-no-files-found: error
