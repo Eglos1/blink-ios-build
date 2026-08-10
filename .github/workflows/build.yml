@@ -74,6 +74,8 @@ jobs:
           ios_enable_code_signing = false
           symbol_level = 0
           blink_symbol_level = 0
+          v8_jitless = true
+          v8_enable_webassembly = false
           EOF
           gclient runhooks
           echo "--- running setup-gn.py to generate build dirs ---"
@@ -90,10 +92,10 @@ jobs:
           ls -la out/Release-iphoneos 2>/dev/null | head
 
       - name: Build content_shell (Blink) for device
-        timeout-minutes: 200
+        timeout-minutes: 300
         run: |
           cd /Users/runner/work/chromium/src
-          autoninja -C out/Release-iphoneos content_shell
+          autoninja -C out/Release-iphoneos -j2 content_shell
           echo "--- disk after build ---"
           df -h /
           ls -la out/Release-iphoneos/content_shell.app 2>/dev/null || true
