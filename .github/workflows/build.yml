@@ -76,6 +76,8 @@ jobs:
           blink_symbol_level = 0
           EOF
           gclient runhooks
+          echo "--- running setup-gn.py to generate build dirs ---"
+          python3 src/ios/build/tools/setup-gn.py
           echo "--- build dirs generated ---"
           ls -la src/out 2>/dev/null || true
 
