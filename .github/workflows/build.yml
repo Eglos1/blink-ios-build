@@ -27,7 +27,6 @@ jobs:
           default_xcode=$(xcode-select -p | sed 's#/Contents/Developer##')
           echo "Default Xcode: $default_xcode"
           ls -d /Applications/Xcode*.app 2>/dev/null || true
-          # Remove every Xcode except the selected one
           for app in /Applications/Xcode*.app; do
             if [ "$app" != "$default_xcode" ]; then
               echo "Removing $app"
@@ -35,11 +34,9 @@ jobs:
             fi
           done
           wait
-          # Remove simulator runtimes (huge) - not needed for device builds
           sudo rm -rf /Library/Developer/CoreSimulator/Profiles/Runtimes 2>/dev/null || true
           sudo rm -rf /Applications/Simulator.app 2>/dev/null || true
           sudo rm -rf ~/Library/Developer/CoreSimulator 2>/dev/null || true
-          # Remove extra Swift toolchains and caches
           sudo rm -rf /Library/Developer/Toolchains 2>/dev/null || true
           sudo rm -rf ~/Library/Caches/* 2>/dev/null || true
           sudo rm -rf ~/Library/Developer/Xcode/DerivedData 2>/dev/null || true
@@ -71,13 +68,13 @@ jobs:
         run: |
           cd /Users/runner/work/chromium
           cat > .setup-gn <<'EOF'
-[gn_args]
-use_blink = true
-ios_content_shell_bundle_identifier = "com.example.blinkcontent"
-ios_enable_code_signing = false
-symbol_level = 0
-blink_symbol_level = 0
-EOF
+          [gn_args]
+          use_blink = true
+          ios_content_shell_bundle_identifier = "com.example.blinkcontent"
+          ios_enable_code_signing = false
+          symbol_level = 0
+          blink_symbol_level = 0
+          EOF
           gclient runhooks
           echo "--- build dirs generated ---"
           ls -la src/out 2>/dev/null || true
