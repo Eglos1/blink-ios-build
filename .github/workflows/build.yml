@@ -75,6 +75,8 @@ jobs:
           symbol_level = 0
           blink_symbol_level = 0
           v8_enable_lite_mode = true
+          cc_wrapper = "ccache"
+          optimize_for_size = true
           EOF
           gclient runhooks
           echo "--- running setup-gn.py to generate build dirs ---"
@@ -90,14 +92,42 @@ jobs:
           df -h /
           ls -la out/Release-iphoneos 2>/dev/null | head
 
+      - name: Install ccache
+        run: |
+          echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
+          export PATH="/opt/homebrew/bin:$PATH"
+          which ccache || brew install ccache
+          ccache --version | head -1
+          mkdir -p /Users/runner/work/ccache
+
+      - name: Restore ccache from previous run
+        id: ccache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: /Users/runner/work/ccache
+          key: blink-ccache-${{ github.run_id }}
+          restore-keys: |
+            blink-ccache-
+
       - name: Build content_shell (Blink) for device
         timeout-minutes: 300
+        env:
+          CCACHE_DIR: /Users/runner/work/ccache
+          CCACHE_COMPRESS: "1"
+          CCACHE_MAXSIZE: 7G
         run: |
           cd /Users/runner/work/chromium/src
           autoninja -C out/Release-iphoneos -j3 content_shell
           echo "--- disk after build ---"
           df -h /
           ls -la out/Release-iphoneos/content_shell.app 2>/dev/null || true
+
+      - name: Save ccache (survives even on build timeout)
+        if: always() && steps.ccache-restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /Users/runner/work/ccache
+          key: blink-ccache-${{ github.run_id }}
 
       - name: Package .ipa
         run: |
