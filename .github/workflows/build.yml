@@ -53,6 +53,27 @@ jobs:
           git --version
           python3 --version
 
+      - name: Restore ccache + pinned source revision
+        id: ccache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            /Users/runner/work/ccache
+            /Users/runner/work/chromium/src-rev.txt
+          key: blink-ccache-${{ github.run_id }}
+          restore-keys: |
+            blink-ccache-
+
+      - name: Stash restored source revision (for pinning after fetch)
+        if: always()
+        run: |
+          if [ -s /Users/runner/work/chromium/src-rev.txt ]; then
+            cp /Users/runner/work/chromium/src-rev.txt /tmp/pinned-rev.txt
+            echo "Stashed pinned revision: $(cat /tmp/pinned-rev.txt)"
+          else
+            echo "No restored revision to stash"
+          fi
+
       - name: Fetch Chromium source (shallow, no history)
         timeout-minutes: 120
         run: |
@@ -60,9 +81,27 @@ jobs:
           mkdir -p /Users/runner/work/chromium
           cd /Users/runner/work/chromium
           fetch --no-history --nohooks ios
+          # Record the exact source revision so future runs can check out the
+          # same code (keeps ccache hits valid across runs).
+          git -C src rev-parse HEAD > /Users/runner/work/chromium/src-rev.txt
+          cat /Users/runner/work/chromium/src-rev.txt
           echo "--- disk after fetch ---"
           df -h /
           du -sh src 2>/dev/null || true
+
+      - name: Check out pinned source revision (if any)
+        run: |
+          if [ -s /tmp/pinned-rev.txt ]; then
+            REV=$(cat /tmp/pinned-rev.txt)
+            cd /Users/runner/work/chromium/src
+            echo "Pinning src to revision $REV"
+            git fetch origin "$REV" --depth 1
+            git checkout "$REV"
+            gclient sync --nohooks
+            echo "Now at: $(git rev-parse HEAD)"
+          else
+            echo "No pinned revision found - using freshly fetched source"
+          fi
 
       - name: Configure GN for Blink (use_blink=true)
         run: |
@@ -77,6 +116,7 @@ jobs:
           v8_enable_lite_mode = true
           cc_wrapper = "ccache"
           optimize_for_size = true
+          use_siso = false
           EOF
           gclient runhooks
           echo "--- running setup-gn.py to generate build dirs ---"
@@ -100,33 +140,29 @@ jobs:
           ccache --version | head -1
           mkdir -p /Users/runner/work/ccache
 
-      - name: Restore ccache from previous run
-        id: ccache-restore
-        uses: actions/cache/restore@v4
-        with:
-          path: /Users/runner/work/ccache
-          key: blink-ccache-${{ github.run_id }}
-          restore-keys: |
-            blink-ccache-
-
       - name: Build content_shell (Blink) for device
         timeout-minutes: 300
         env:
           CCACHE_DIR: /Users/runner/work/ccache
+          CCACHE_BASEDIR: /Users/runner/work
           CCACHE_COMPRESS: "1"
-          CCACHE_MAXSIZE: 7G
+          CCACHE_MAXSIZE: 8G
         run: |
           cd /Users/runner/work/chromium/src
           autoninja -C out/Release-iphoneos -j3 content_shell
+          echo "--- ccache stats ---"
+          ccache -s
           echo "--- disk after build ---"
           df -h /
           ls -la out/Release-iphoneos/content_shell.app 2>/dev/null || true
 
-      - name: Save ccache (survives even on build timeout)
+      - name: Save ccache + pinned revision (survives even on build timeout)
         if: always() && steps.ccache-restore.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
-          path: /Users/runner/work/ccache
+          path: |
+            /Users/runner/work/ccache
+            /Users/runner/work/chromium/src-rev.txt
           key: blink-ccache-${{ github.run_id }}
 
       - name: Package .ipa
