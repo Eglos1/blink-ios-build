@@ -2,6 +2,20 @@ name: Build Blink Chromium for iOS
 
 on:
   workflow_dispatch:
+    inputs:
+      full_build:
+        description: 'Run the full content_shell build (false = diagnose ccache only)'
+        required: false
+        default: true
+        type: boolean
+      jobs:
+        description: 'Parallel ninja jobs (-j)'
+        required: false
+        default: '3'
+        type: choice
+        options:
+          - '2'
+          - '3'
 
 env:
   DEPOT_TOOLS_PATH: /Users/runner/work/_temp/depot_tools
@@ -147,17 +161,69 @@ jobs:
           CCACHE_BASEDIR: /Users/runner/work
           CCACHE_COMPRESS: "1"
           CCACHE_MAXSIZE: 8G
+          CCACHE_SLOPPINESS: time_macros
+          CCACHE_DEPEND: "1"
+          CCACHE_COMPILERCHECK: content
+          CCACHE_LOGFILE: /Users/runner/work/ccachelog.txt
         run: |
-          cd /Users/runner/work/chromium/src
-          autoninja -C out/Release-iphoneos -j3 content_shell
-          echo "--- ccache stats ---"
-          ccache -s
-          echo "--- disk after build ---"
-          df -h /
-          ls -la out/Release-iphoneos/content_shell.app 2>/dev/null || true
+          cd /Users/runner/work/chromium/src/out/Release-iphoneos
+
+          echo "=== ccache stats BEFORE build (restored from previous run) ==="
+          ccache -sv | head -80 || true
+
+          echo "=== sample: grab real compile commands ==="
+          ninja -t commands content_shell 2>/dev/null > /tmp/commands.txt || true
+          echo "total commands: $(wc -l < /tmp/commands.txt)"
+          grep -E 'clang\+\+.* -c ' /tmp/commands.txt | head -1 > /tmp/sample1.sh || true
+          grep -E ' -c [^ ]+\.c ' /tmp/commands.txt | head -1 > /tmp/sample2.sh || true
+          grep -E ' -c [^ ]+\.mm ' /tmp/commands.txt | head -1 > /tmp/sample3.sh || true
+          i=0
+          for f in /tmp/sample1.sh /tmp/sample2.sh /tmp/sample3.sh; do
+            i=$((i+1))
+            echo "=== SAMPLE $i command: ==="
+            cat "$f" || true
+            if [ -s "$f" ]; then
+              CCACHE_DEBUG=1 bash "$f" > /tmp/sample_out_$i.txt 2>&1 || echo "(compile failed - see sample_out_$i.txt)"
+              echo "--- ccache debug decision ---"
+              cat ccache.debug.*.log 2>/dev/null | grep -iE 'result|miss|hit|unsupported|could not|too hard|disabled|sloppiness|direct mode|depend mode|hash|preprocess|compiler check' | head -25 || true
+              rm -f ccache.debug.*.log
+            fi
+          done
+          echo "=== ccache stats after samples ==="
+          ccache -sv | head -40 || true
+
+          ccache -z || true
+
+          if [ "${{ inputs.full_build }}" == "true" ]; then
+            echo "=== FULL BUILD (ninja -j${{ inputs.jobs }}) ==="
+            autoninja -C /Users/runner/work/chromium/src/out/Release-iphoneos -j${{ inputs.jobs }} content_shell
+            echo "--- ccache stats ---"
+            ccache -sv
+            echo "--- disk after build ---"
+            df -h /
+            ls -la /Users/runner/work/chromium/src/out/Release-iphoneos/content_shell.app 2>/dev/null || true
+          else
+            echo "=== DIAGNOSE-ONLY: skipping full build ==="
+            ccache -sv
+            echo "--- ccache logfile tail ---"
+            tail -60 /Users/runner/work/ccachelog.txt 2>/dev/null || true
+          fi
+
+      - name: Dump ccache diagnostics (survives build timeout)
+        if: always()
+        env:
+          CCACHE_DIR: /Users/runner/work/ccache
+        run: |
+          echo "=== ccache stats AFTER build ==="
+          ccache -sv | head -80 || true
+          echo "=== ccache per-call log reasons (sorted) ==="
+          grep -iE 'unsupported|could not|couldn|too hard|compiler check|disabled|Result: cache|internal error|failed|Skipping' /Users/runner/work/ccachelog.txt 2>/dev/null \
+            | sed -E 's/^.*\] \[ccache\] //' | sort | uniq -c | sort -rn | head -40 || true
+          echo "=== raw log line count ==="
+          wc -l /Users/runner/work/ccachelog.txt 2>/dev/null || true
 
       - name: Save ccache + pinned revision (survives even on build timeout)
-        if: always() && steps.ccache-restore.outputs.cache-hit != 'true'
+        if: always()
         uses: actions/cache/save@v4
         with:
           path: |
@@ -170,8 +236,8 @@ jobs:
           cd /Users/runner/work/chromium/src
           APP=out/Release-iphoneos/content_shell.app
           if [ ! -d "$APP" ]; then
-            echo "ERROR: content_shell.app not found"
-            exit 1
+            echo "content_shell.app not found - skipping package (diagnose-only run?)"
+            exit 0
           fi
           echo "--- Info.plist bundle id ---"
           /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Info.plist" 2>/dev/null || true
@@ -186,4 +252,4 @@ jobs:
         with:
           name: blink-content-shell-ipa
           path: /tmp/ipa/blink-content-shell.ipa
-          if-no-files-found: error
+          if-no-files-found: warn
