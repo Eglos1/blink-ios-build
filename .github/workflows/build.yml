@@ -155,7 +155,7 @@ jobs:
           mkdir -p /Users/runner/work/ccache
 
       - name: Build content_shell (Blink) for device
-        timeout-minutes: 300
+        timeout-minutes: 280
         env:
           CCACHE_DIR: /Users/runner/work/ccache
           CCACHE_BASEDIR: /Users/runner/work
