@@ -216,6 +216,19 @@ jobs:
             tail -60 /Users/runner/work/ccachelog.txt 2>/dev/null || true
           fi
 
+      - name: Kill orphan build processes (protects cache save)
+        if: always()
+        run: |
+          pkill -9 clang || true
+          pkill -9 clang++ || true
+          pkill -9 ccache || true
+          pkill -9 ninja || true
+          pkill -9 autoninja || true
+          pkill -9 ld64.lld || true
+          pkill -9 -f 'content_shell' || true
+          sleep 5
+          echo "orphans cleaned"
+
       - name: Dump ccache diagnostics (survives build timeout)
         if: always()
         env:
