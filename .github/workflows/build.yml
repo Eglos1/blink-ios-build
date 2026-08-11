@@ -155,7 +155,7 @@ jobs:
           mkdir -p /Users/runner/work/ccache
 
       - name: Build content_shell (Blink) for device
-        timeout-minutes: 280
+        timeout-minutes: 295
         env:
           CCACHE_DIR: /Users/runner/work/ccache
           CCACHE_BASEDIR: /Users/runner/work
@@ -171,33 +171,30 @@ jobs:
           echo "=== ccache stats BEFORE build (restored from previous run) ==="
           ccache -sv | head -80 || true
 
-          echo "=== sample: grab real compile commands ==="
-          B=/Users/runner/work/chromium/src/out/Release-iphoneos
-          ninja -C "$B" -t commands content_shell > /tmp/commands.txt 2>&1 || true
-          echo "content_shell command db: $(wc -l < /tmp/commands.txt) lines"
-          if [ ! -s /tmp/commands.txt ]; then
-            echo "empty; falling back to libc++abi target"
-            ninja -C "$B" -t commands libc++abi > /tmp/commands.txt 2>&1 || true
-            echo "libc++abi command db: $(wc -l < /tmp/commands.txt) lines"
+          if [ "${{ inputs.full_build }}" != "true" ]; then
+            echo "=== DIAGNOSE-ONLY: sample compile commands ==="
+            B=/Users/runner/work/chromium/src/out/Release-iphoneos
+            ninja -C "$B" -t commands > /tmp/commands.txt 2>&1 || true
+            echo "command db: $(wc -l < /tmp/commands.txt) lines"
+            tail -2 /tmp/commands.txt || true
+            grep -E 'clang\+\+.* -c ' /tmp/commands.txt | head -1 > /tmp/sample1.sh || true
+            grep -E ' -c [^ ]+\.c ' /tmp/commands.txt | head -1 > /tmp/sample2.sh || true
+            grep -E ' -c [^ ]+\.mm ' /tmp/commands.txt | head -1 > /tmp/sample3.sh || true
+            i=0
+            for f in /tmp/sample1.sh /tmp/sample2.sh /tmp/sample3.sh; do
+              i=$((i+1))
+              echo "=== SAMPLE $i command: ==="
+              cat "$f" || true
+              if [ -s "$f" ]; then
+                CCACHE_DEBUG=1 bash "$f" > /tmp/sample_out_$i.txt 2>&1 || echo "(compile failed - see sample_out_$i.txt)"
+                echo "--- ccache debug decision ---"
+                cat ccache.debug.*.log 2>/dev/null | grep -iE 'result|miss|hit|unsupported|could not|too hard|disabled|sloppiness|direct mode|depend mode|hash|preprocess|compiler check' | head -25 || true
+                rm -f ccache.debug.*.log
+              fi
+            done
+            echo "=== ccache stats after samples ==="
+            ccache -sv | head -40 || true
           fi
-          tail -5 /tmp/commands.txt || true
-          grep -E 'clang\+\+.* -c ' /tmp/commands.txt | head -1 > /tmp/sample1.sh || true
-          grep -E ' -c [^ ]+\.c ' /tmp/commands.txt | head -1 > /tmp/sample2.sh || true
-          grep -E ' -c [^ ]+\.mm ' /tmp/commands.txt | head -1 > /tmp/sample3.sh || true
-          i=0
-          for f in /tmp/sample1.sh /tmp/sample2.sh /tmp/sample3.sh; do
-            i=$((i+1))
-            echo "=== SAMPLE $i command: ==="
-            cat "$f" || true
-            if [ -s "$f" ]; then
-              CCACHE_DEBUG=1 bash "$f" > /tmp/sample_out_$i.txt 2>&1 || echo "(compile failed - see sample_out_$i.txt)"
-              echo "--- ccache debug decision ---"
-              cat ccache.debug.*.log 2>/dev/null | grep -iE 'result|miss|hit|unsupported|could not|too hard|disabled|sloppiness|direct mode|depend mode|hash|preprocess|compiler check' | head -25 || true
-              rm -f ccache.debug.*.log
-            fi
-          done
-          echo "=== ccache stats after samples ==="
-          ccache -sv | head -40 || true
 
           ccache -z || true
 
