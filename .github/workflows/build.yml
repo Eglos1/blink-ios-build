@@ -161,7 +161,7 @@ jobs:
           CCACHE_BASEDIR: /Users/runner/work
           CCACHE_COMPRESS: "1"
           CCACHE_MAXSIZE: 8G
-          CCACHE_SLOPPINESS: time_macros
+          CCACHE_SLOPPINESS: time_macros,modules
           CCACHE_DEPEND: "1"
           CCACHE_COMPILERCHECK: content
           CCACHE_LOGFILE: /Users/runner/work/ccachelog.txt
@@ -172,8 +172,15 @@ jobs:
           ccache -sv | head -80 || true
 
           echo "=== sample: grab real compile commands ==="
-          ninja -t commands content_shell 2>/dev/null > /tmp/commands.txt || true
-          echo "total commands: $(wc -l < /tmp/commands.txt)"
+          B=/Users/runner/work/chromium/src/out/Release-iphoneos
+          ninja -C "$B" -t commands content_shell > /tmp/commands.txt 2>&1 || true
+          echo "content_shell command db: $(wc -l < /tmp/commands.txt) lines"
+          if [ ! -s /tmp/commands.txt ]; then
+            echo "empty; falling back to libc++abi target"
+            ninja -C "$B" -t commands libc++abi > /tmp/commands.txt 2>&1 || true
+            echo "libc++abi command db: $(wc -l < /tmp/commands.txt) lines"
+          fi
+          tail -5 /tmp/commands.txt || true
           grep -E 'clang\+\+.* -c ' /tmp/commands.txt | head -1 > /tmp/sample1.sh || true
           grep -E ' -c [^ ]+\.c ' /tmp/commands.txt | head -1 > /tmp/sample2.sh || true
           grep -E ' -c [^ ]+\.mm ' /tmp/commands.txt | head -1 > /tmp/sample3.sh || true
