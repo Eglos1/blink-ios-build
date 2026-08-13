@@ -16,6 +16,11 @@ on:
         options:
           - '2'
           - '3'
+      pin_rev:
+        description: 'Exact source revision to build (overrides restored pin)'
+        required: false
+        default: ''
+        type: string
 
 env:
   DEPOT_TOOLS_PATH: /Users/runner/work/_temp/depot_tools
@@ -105,16 +110,26 @@ jobs:
 
       - name: Check out pinned source revision (if any)
         run: |
-          if [ -s /tmp/pinned-rev.txt ]; then
+          cd /Users/runner/work/chromium/src
+          if [ -n "${{ inputs.pin_rev }}" ]; then
+            REV="${{ inputs.pin_rev }}"
+            echo "Using manual pin_rev: $REV"
+          elif [ -s /tmp/pinned-rev.txt ]; then
             REV=$(cat /tmp/pinned-rev.txt)
-            cd /Users/runner/work/chromium/src
-            echo "Pinning src to revision $REV"
+            echo "Pinning src to restored revision $REV"
+          else
+            echo "No pinned revision found - using freshly fetched source"
+            REV=""
+          fi
+          if [ -n "$REV" ]; then
             git fetch origin "$REV" --depth 1
             git checkout "$REV"
             gclient sync --nohooks
             echo "Now at: $(git rev-parse HEAD)"
-          else
-            echo "No pinned revision found - using freshly fetched source"
+            # Record the revision we ACTUALLY built (not the fetch-time HEAD) so
+            # the next run pins to the same source and ccache hits stay valid.
+            git rev-parse HEAD > /Users/runner/work/chromium/src-rev.txt
+            echo "Saved built revision to src-rev.txt"
           fi
 
       - name: Configure GN for Blink (use_blink=true)
