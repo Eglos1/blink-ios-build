@@ -231,15 +231,36 @@ jobs:
       - name: Kill orphan build processes (protects cache save)
         if: always()
         run: |
-          pkill -9 clang || true
-          pkill -9 clang++ || true
-          pkill -9 ccache || true
-          pkill -9 ninja || true
-          pkill -9 autoninja || true
-          pkill -9 ld64.lld || true
+          pkill -9 -x clang || true
+          pkill -9 -x 'clang\+\+' || true
+          pkill -9 -x ccache || true
+          pkill -9 -x ninja || true
+          pkill -9 -x autoninja || true
+          pkill -9 -x 'ld64\.lld' || true
           pkill -9 -f 'content_shell' || true
-          sleep 5
+          # Wait for any stragglers to fully exit so the ccache dir quiesces.
+          for i in $(seq 1 10); do
+            if ! (pgrep -x ccache >/dev/null || pgrep -x clang >/dev/null \
+                  || pgrep -x 'clang\+\+' >/dev/null || pgrep -x ninja >/dev/null); then
+              break
+            fi
+            sleep 3
+          done
+          sleep 3
           echo "orphans cleaned"
+
+      - name: Stage ccache snapshot (protects save from concurrent writes)
+        if: always()
+        run: |
+          # The Actions cache save tars the directory and FAILS if any file
+          # changes/removes while it reads (seen twice: 'file changed/removed
+          # before we read it'). Snapshot the (now quiescent) cache dir into a
+          # fresh dir so the save reads a static tree.
+          rm -rf /Users/runner/work/ccache.staged
+          cp -a /Users/runner/work/ccache /Users/runner/work/ccache.staged
+          rm -rf /Users/runner/work/ccache
+          mv /Users/runner/work/ccache.staged /Users/runner/work/ccache
+          echo "ccache snapshot staged: $(du -sh /Users/runner/work/ccache | cut -f1)"
 
       - name: Dump ccache diagnostics (survives build timeout)
         if: always()
