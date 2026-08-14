@@ -142,7 +142,12 @@ jobs:
           ios_enable_code_signing = false
           symbol_level = 0
           blink_symbol_level = 0
-          v8_enable_lite_mode = true
+          # NOTE: lite mode is deliberately NOT set here. On iphoneos with
+          # use_blink=true, v8.gni defaults v8_enable_lite_mode to false, which
+          # keeps v8_enable_webassembly=true (and Turbofan). Forcing
+          # v8_enable_lite_mode=true disabled V8 webassembly and the final link
+          # failed with undefined v8::WasmModuleCompilation symbols referenced
+          # by blink's script_streamer/module_script_loader.
           cc_wrapper = "ccache"
           optimize_for_size = true
           use_siso = false
